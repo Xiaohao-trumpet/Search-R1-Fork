@@ -807,6 +807,44 @@ class RayPPOTrainer(object):
                         except Exception as _e:
                             print(f"[instrumentation] skipped: {_e}")
 
+                        # --- dynamic sampling (DAPO-style, 2503.14476) ---
+                        # Uniform-reward groups (all responses to a prompt get the same reward)
+                        # have advantage == 0 and contribute NO gradient (problem P1). DAPO drops
+                        # them and resamples toward informative (mixed-reward) prompts.
+                        # In-batch, size-preserving variant (safe for unattended runs; never
+                        # regenerates -> never hangs): keep whole informative groups and refill the
+                        # batch by resampling them with replacement, so the fixed batch shape and
+                        # per-group GRPO statistics are preserved. If NO group is informative
+                        # (common under binary EM -> itself evidence for P1), the batch is left
+                        # unchanged. See IMPROVEMENT_DESIGN_zh.md sec 4.2 / 5.2 / 8.
+                        if self.config.algorithm.get('dynamic_sampling', False):
+                            try:
+                                _scores = batch.batch['token_level_scores'].sum(-1)
+                                _uids = batch.non_tensor_batch['uid']
+                                _groups = defaultdict(list)
+                                for _ridx, _u in enumerate(_uids):
+                                    _groups[_u].append(_ridx)
+                                _n_rows = len(_uids)
+                                _num_groups = len(_groups)
+                                _info_uids = [
+                                    _u for _u, _rows in _groups.items()
+                                    if (max(_scores[_r].item() for _r in _rows)
+                                        - min(_scores[_r].item() for _r in _rows)) > 1e-8
+                                ]
+                                metrics['dynamic_sampling/kept_frac'] = len(_info_uids) / max(1, _num_groups)
+                                if 0 < len(_info_uids) < _num_groups:
+                                    # cycle informative groups to fill exactly _num_groups slots
+                                    _chosen = [_info_uids[_i % len(_info_uids)] for _i in range(_num_groups)]
+                                    _new_idx = []
+                                    for _u in _chosen:
+                                        _new_idx.extend(_groups[_u])
+                                    if len(_new_idx) == _n_rows:  # only when group sizes are uniform
+                                        batch.reorder(torch.tensor(_new_idx, dtype=torch.long))
+                                        batch.meta_info['global_token_num'] = torch.sum(
+                                            batch.batch['attention_mask'], dim=-1).tolist()
+                            except Exception as _e:
+                                print(f"[dynamic_sampling] skipped: {_e}")
+
                         # compute rewards. apply_kl_penalty if available
                         if not self.config.actor_rollout_ref.actor.use_kl_loss:
                             batch, kl_metrics = apply_kl_penalty(batch,

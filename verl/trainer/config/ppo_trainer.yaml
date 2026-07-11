@@ -157,6 +157,8 @@ algorithm:
   lam: 1.0
   adv_estimator: gae
   norm_adv_by_std: True  # GRPO: divide advantage by group std. False = Dr. GRPO (mean-only baseline)
+  dynamic_sampling: False    # DAPO: drop uniform-reward groups and resample toward informative ones
+  dynamic_oversample_factor: 2  # (reserved) oversample budget for dynamic sampling
   no_think_rl: False
   kl_penalty: kl  # how to estimate kl divergence
   kl_ctrl:
