@@ -135,3 +135,46 @@ pay off once the reward supplies intra-group variance for them to exploit."
   converged task performance. The density/coverage metrics are the robust signal;
   performance-level claims need a larger val set, more steps, and multiple seeds.
 - A+ bundles 3 changes -> can't attribute within it. See next: component ablation.
+
+## Wave 3 — A+ component ablation (all on F1 reward) — DONE
+Isolate each A+ component; endpoints are reward (none) and both (all three).
+
+| variant (F1 +)      | nonzero | nonunif | kept  | entropy | grad_norm | resp_len | search | val(n=8) |
+|---|---|---|---|---|---|---|---|---|
+| none (F1+vanilla)   | 0.174 | 0.359 | -     | 1.118 | 3.46  | 316 | 0.455 | 0.25  |
+| +Dr.GRPO only       | 0.211 | 0.422 | -     | 1.171 | 1.04  | 249 | 0.335 | 0.125 |
+| +clip-higher only   | 0.199 | 0.406 | -     | 1.135 | 4.37  | 292 | 0.468 | 0.125 |
+| +dyn-sampling only  | 0.207 | 0.391 | 0.391 | 0.812 | 10.43 | 195 | 0.285 | 0.25  |
+| +ALL three (A+)     | 0.220 | 0.406 | 0.406 | 0.838 | 4.02  | 198 | 0.334 | 0.25  |
+
+### Finding 3 — component attribution (the grad_norm column tells the story)
+- **Gradient COVERAGE (nonuniform_group_frac)**: all three components nudge it up
+  similarly (0.359 -> 0.39-0.42), Dr.GRPO the most (0.422). Coverage saturates —
+  stacking doesn't beat the best single. So none of them is a big *coverage* lever;
+  that was the reward's job (Finding 1).
+- **Gradient MAGNITUDE (grad_norm) is where they differ sharply**:
+  - **Dr.GRPO SHRINKS gradients** (3.46 -> 1.04). Removing ÷std kills the advantage
+    inflation that low-variance (binary-ish) groups suffer: for a group with rewards
+    in {0, small}, std<1 so dividing by it BLOWS UP advantages; removing it yields
+    moderate, stable gradients. Dr.GRPO = the **stabilizer**.
+  - **Dynamic sampling EXPLODES gradients** (-> 10.43) and drives the biggest entropy
+    drop (0.812) + shortest responses (195). It duplicates the few informative groups
+    to fill the batch, so the update is dominated by a handful of high-advantage
+    samples. Powerful but **risky alone** (grad_norm 10 -> instability on longer runs).
+  - **clip-higher**: mild across the board (expected — at 25 steps entropy collapse
+    hasn't set in, so its safeguard role isn't exercised yet).
+- **Genuine complementarity (Dr.GRPO x dynamic sampling)**: combined (A+), Dr.GRPO's
+  shrinkage offsets dynamic sampling's explosion -> grad_norm 10.43 -> 4.02, entropy
+  0.812 -> 0.838 (slightly safer), keeping the coverage/conciseness gains. So the
+  right pairing is **dynamic sampling (amplifier) + Dr.GRPO (stabilizer)**; running
+  dynamic sampling without the Dr.GRPO de-bias would be gradient-unstable.
+
+### Practical takeaways for the report
+1. Reward densification (F1+soft-gate+retrieval-bonus) is the first-order fix — it
+   is what recovers gradient COVERAGE (3.3x). Do this first.
+2. On top of dense reward, **Dr.GRPO is the safest single algorithm add** (best
+   coverage, and it *reduces* grad_norm -> more stable). Highest value-per-risk.
+3. **Dynamic sampling is potent but must be paired with Dr.GRPO** (or a smaller LR /
+   grad-clip) to control the gradient-magnitude blow-up from group duplication.
+4. clip-higher's payoff needs a longer horizon (where entropy collapse actually
+   happens) to show up — untested at 25 steps.
