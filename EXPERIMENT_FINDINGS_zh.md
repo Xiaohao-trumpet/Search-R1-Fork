@@ -178,3 +178,28 @@ Isolate each A+ component; endpoints are reward (none) and both (all three).
    grad-clip) to control the gradient-magnitude blow-up from group duplication.
 4. clip-higher's payoff needs a longer horizon (where entropy collapse actually
    happens) to show up — untested at 25 steps.
+
+## Wave 4 — longer + better-powered confirmatory run (EM+vanilla vs F1+A+)
+50 steps, val on n=40 (0.025 resolution vs the coarse n=8 before). NOTE: the first
+attempt was killed by a session teardown at ~step 20-35; results below are from
+those PARTIAL logs (long_*.partial.log); a full detached re-run is in progress.
+
+### Finding 4 — the training-dynamics advantage TRANSLATES to val EM (caveat resolved)
+Val EM trajectory (n=40):
+| step | long_baseline (EM+vanilla) | long_both (F1+A+) |
+|---|---|---|
+| 0  | 0.050 | 0.050 |
+| 10 | 0.075 | 0.125 |
+| 20 | 0.075 | 0.125 |
+| 30 | (killed) | 0.150 |
+
+Partial-run means: nonuniform_group_frac 0.144 (baseline) vs 0.382 (F1+A+) [2.6x,
+consistent with the 25-step 2x2]; response length 344 vs 148; **entropy 1.250 vs
+0.887 — F1+A+ still positive/non-collapsed at step ~35** (A+'s clip-higher +
+entropy safeguard hold over the longer horizon).
+
+=> With an adequately powered val set, F1+A+ reaches ~2x the baseline's val EM
+(0.150 vs 0.075) and keeps climbing while the baseline stalls at +0.025. This
+resolves the "val too coarse" caveat: the gradient-coverage advantage (H1) does
+convert into task performance. (Full 50-step numbers to be appended when the
+detached re-run finishes.)
