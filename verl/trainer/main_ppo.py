@@ -33,10 +33,14 @@ class RewardManager():
     """The reward manager.
     """
 
-    def __init__(self, tokenizer, num_examine, format_score=0.) -> None:
+    def __init__(self, tokenizer, num_examine, format_score=0., reward_type='em', reward_kwargs=None) -> None:
         self.tokenizer = tokenizer
         self.num_examine = num_examine  # the number of batches of decoded responses to print to the console
         self.format_score = format_score
+        # reward_type: 'em' (default binary exact-match) or 'f1_shaped' (dense R+).
+        # See IMPROVEMENT_DESIGN_zh.md sec 5.1.
+        self.reward_type = reward_type
+        self.reward_kwargs = reward_kwargs or {}
 
     def __call__(self, data: DataProto):
         """We will expand this function gradually based on the available datasets"""
@@ -73,9 +77,14 @@ class RewardManager():
 
             # select rm_score
             data_source = data_item.non_tensor_batch['data_source']
-            compute_score_fn = _select_rm_score_fn(data_source)
 
-            score = compute_score_fn(solution_str=sequences_str, ground_truth=ground_truth, format_score=self.format_score)
+            if self.reward_type == 'f1_shaped':
+                score = qa_em.compute_score_f1_shaped(solution_str=sequences_str,
+                                                      ground_truth=ground_truth,
+                                                      **self.reward_kwargs)
+            else:
+                compute_score_fn = _select_rm_score_fn(data_source)
+                score = compute_score_fn(solution_str=sequences_str, ground_truth=ground_truth, format_score=self.format_score)
 
             reward_tensor[i, valid_response_length - 1] = score
             # all_scores.append(score)
@@ -180,10 +189,14 @@ def main_task(config):
         role_worker_mapping[Role.RewardModel] = ray.remote(RewardModelWorker)
         mapping[Role.RewardModel] = global_pool_id
 
-    reward_fn = RewardManager(tokenizer=tokenizer, num_examine=0)
+    # reward_type: 'em' (binary EM baseline) or 'f1_shaped' (dense R+). Training
+    # reward is shaped; validation is always plain EM so the reported val score is
+    # comparable across variants. See IMPROVEMENT_DESIGN_zh.md sec 5.1 / 7.2.
+    reward_type = config.data.get('reward_type', 'em')
+    reward_fn = RewardManager(tokenizer=tokenizer, num_examine=0, reward_type=reward_type)
 
     # Note that we always use function-based RM for validation
-    val_reward_fn = RewardManager(tokenizer=tokenizer, num_examine=1)
+    val_reward_fn = RewardManager(tokenizer=tokenizer, num_examine=1, reward_type='em')
 
     resource_pool_manager = ResourcePoolManager(resource_pool_spec=resource_pool_spec, mapping=mapping)
     trainer = RayPPOTrainer(config=config,
