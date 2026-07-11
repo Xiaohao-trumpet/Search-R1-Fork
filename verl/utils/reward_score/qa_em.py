@@ -203,33 +203,32 @@ def compute_score_f1_shaped(solution_str, ground_truth,
                             retrieval_score=0.2,
                             search_penalty=0.05,
                             free_searches=1,
-                            invalid_format_score=0.0,
+                            invalid_format_scale=0.1,
                             score=1.):
     """Dense, shaped reward (R+). Returns a float in roughly [0, 1].
 
-    valid format:
-        base   = F1(answer[:cap], gold)                      # dense answer reward
+        base   = F1(answer[:cap], gold)                       # dense answer reward
         if base ~ 0 and gold in retrieved info: base = retrieval_score  # AutoRefine
         base  -= search_penalty * max(0, #searches - free_searches)     # efficiency
-        return clamp(base, 0, 1)
-    invalid format:
-        return invalid_format_score (default 0)              # format acts as a gate
+        base   = clamp(base, 0, 1)
+        if format invalid: base *= invalid_format_scale       # SOFT gate (not hard 0)
+
+    Design note (why a SOFT gate, updated after experiment): a HARD format gate
+    zeros out every rollout of a cold-start small model that hasn't learned the
+    exact <think>/<search>/<information>/<answer> sequence yet -> the dense F1
+    signal never flows and GRPO still sees all-zero groups (P1). A soft gate
+    keeps valid format worth ~1/scale x more (still strongly preferred) while
+    letting correct-but-slightly-malformed answers earn partial gradient. It is
+    still NOT the hackable pattern from "One Token to Fool" (2507.08794): the
+    reward is gated on real answer F1 / retrieval, never a positive bonus for
+    format alone. The retrieval-utility term fires regardless of format (finding
+    evidence is good behavior even before format is mastered).
     """
     # Local import keeps this file's top-level deps minimal and avoids cycles.
     from verl.utils.reward_score.qa_em_format import is_valid_sequence, is_retrieval_correct
 
     is_valid_format, _ = is_valid_sequence(solution_str)
     answer = extract_solution(solution_str=solution_str)
-
-    do_print = random.randint(1, 64) == 1
-    if do_print:
-        print(f"--------------------------------")
-        print(f"[f1_shaped] Golden answers: {ground_truth['target']}")
-        print(f"[f1_shaped] Extracted answer: {answer} | valid_format={is_valid_format}")
-        print(f"[f1_shaped] Solution string: {solution_str}")
-
-    if not is_valid_format:
-        return invalid_format_score
 
     base = f1_check(answer, ground_truth['target'], word_cap=answer_word_cap) if answer is not None else 0.0
 
@@ -238,5 +237,15 @@ def compute_score_f1_shaped(solution_str, ground_truth,
 
     n_search = count_searches(solution_str)
     base = base - search_penalty * max(0, n_search - free_searches)
+    base = max(0.0, min(1.0, base))
 
-    return max(0.0, min(1.0, base))
+    if not is_valid_format:
+        base = base * invalid_format_scale
+
+    do_print = random.randint(1, 64) == 1
+    if do_print:
+        print(f"--------------------------------")
+        print(f"[f1_shaped] Golden answers: {ground_truth['target']} | valid_format={is_valid_format} "
+              f"| answer={answer} | n_search={n_search} | score={base:.3f}")
+
+    return base
