@@ -171,7 +171,8 @@ def compute_rewards(token_level_scores, old_log_prob, ref_log_prob, kl_ratio):
     return token_level_scores - kl * kl_ratio
 
 
-def compute_policy_loss(old_log_prob, log_prob, advantages, eos_mask, cliprange):
+def compute_policy_loss(old_log_prob, log_prob, advantages, eos_mask, cliprange=None,
+                        cliprange_low=None, cliprange_high=None):
     """Adapted from https://github.com/huggingface/trl/blob/main/trl/trainer/ppo_trainer.py#L1122
 
     Args:
@@ -184,7 +185,13 @@ def compute_policy_loss(old_log_prob, log_prob, advantages, eos_mask, cliprange)
         eos_mask: `(torch.Tensor)`
             shape: (bs, response_length)
         cliprange: (float)
-            The clip range used in PPO. See https://arxiv.org/abs/1707.06347
+            Symmetric PPO clip range. See https://arxiv.org/abs/1707.06347
+        cliprange_low / cliprange_high: (float, optional)
+            Decoupled clip bounds (DAPO "clip-higher", 2503.14476). Raising only
+            the upper bound (e.g. low=0.2, high=0.28) gives low-probability but
+            positive-advantage ("exploration") tokens room to grow instead of
+            being capped, mitigating entropy collapse. Fall back to `cliprange`
+            when not set. See IMPROVEMENT_DESIGN_zh.md sec 4.2 / 5.2.
 
     Returns:
         pg_loss: `a scalar torch.Tensor`
@@ -193,12 +200,17 @@ def compute_policy_loss(old_log_prob, log_prob, advantages, eos_mask, cliprange)
             a float number indicating the fraction of policy gradient loss being clipped
 
     """
+    if cliprange_low is None:
+        cliprange_low = cliprange
+    if cliprange_high is None:
+        cliprange_high = cliprange
+
     negative_approx_kl = log_prob - old_log_prob
     ratio = torch.exp(negative_approx_kl)
     ppo_kl = verl_F.masked_mean(-negative_approx_kl, eos_mask)
 
     pg_losses = -advantages * ratio
-    pg_losses2 = -advantages * torch.clamp(ratio, 1.0 - cliprange, 1.0 + cliprange)
+    pg_losses2 = -advantages * torch.clamp(ratio, 1.0 - cliprange_low, 1.0 + cliprange_high)
 
     pg_loss = verl_F.masked_mean(torch.max(pg_losses, pg_losses2), eos_mask)
     pg_clipfrac = verl_F.masked_mean(torch.gt(pg_losses2, pg_losses).float(), eos_mask)
