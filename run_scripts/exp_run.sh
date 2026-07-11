@@ -28,6 +28,8 @@ GPUS=${GPUS:-4,5}
 STEPS=${STEPS:-20}
 NAGENT=${NAGENT:-5}
 TRAIN_BS=${TRAIN_BS:-8}
+VAL_NUM=${VAL_NUM:-8}
+TESTFREQ=${TESTFREQ:-10}
 
 NGPU=$(echo $GPUS | tr ',' '\n' | wc -l)
 LOGDIR=/mnt/backup1/lgc/search-r1-data/exp_logs
@@ -50,7 +52,7 @@ python3 -m verl.trainer.main_ppo \
     data.train_files=$DATA_DIR/train.parquet \
     data.val_files=$DATA_DIR/test.parquet \
     data.train_data_num=null \
-    data.val_data_num=8 \
+    data.val_data_num=$VAL_NUM \
     data.train_batch_size=$TRAIN_BS \
     data.val_batch_size=8 \
     data.max_prompt_length=1536 \
@@ -94,7 +96,7 @@ python3 -m verl.trainer.main_ppo \
     trainer.n_gpus_per_node=$NGPU \
     trainer.nnodes=1 \
     trainer.save_freq=-1 \
-    trainer.test_freq=10 \
+    trainer.test_freq=$TESTFREQ \
     trainer.project_name=Search-R1-improve \
     trainer.experiment_name=$VARIANT \
     trainer.total_epochs=1 \
