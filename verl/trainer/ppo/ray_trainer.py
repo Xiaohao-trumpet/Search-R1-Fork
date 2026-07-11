@@ -120,7 +120,7 @@ def apply_kl_penalty(data: DataProto, kl_ctrl: core_algos.AdaptiveKLController, 
     return data, metrics
 
 
-def compute_advantage(data: DataProto, adv_estimator, gamma=1.0, lam=1.0, num_repeat=1):
+def compute_advantage(data: DataProto, adv_estimator, gamma=1.0, lam=1.0, num_repeat=1, norm_adv_by_std=True):
     # prepare response group
     # TODO: add other ways to estimate advantages
     if adv_estimator == 'gae':
@@ -146,7 +146,8 @@ def compute_advantage(data: DataProto, adv_estimator, gamma=1.0, lam=1.0, num_re
         response_mask = attention_mask[:, -response_length:]
         advantages, returns = core_algos.compute_grpo_outcome_advantage(token_level_rewards=token_level_rewards,
                                                                         eos_mask=response_mask,
-                                                                        index=index)
+                                                                        index=index,
+                                                                        norm_adv_by_std=norm_adv_by_std)
         data.batch['advantages'] = advantages
         data.batch['returns'] = returns
     else:
@@ -788,6 +789,24 @@ class RayPPOTrainer(object):
                         reward_tensor = self.reward_fn(batch)
                         batch.batch['token_level_scores'] = reward_tensor
 
+                        # --- instrumentation for H1/H4 (see IMPROVEMENT_DESIGN_zh.md sec 7.2) ---
+                        # These reveal the "uniform-group -> zero-gradient" mechanism that both
+                        # reward densification and dynamic sampling target.
+                        try:
+                            seq_scores = reward_tensor.sum(-1)  # (bs,)
+                            metrics['reward/mean'] = seq_scores.mean().item()
+                            metrics['reward/nonzero_frac'] = (seq_scores.abs() > 1e-8).float().mean().item()
+                            _uids = batch.non_tensor_batch['uid']
+                            _g = defaultdict(list)
+                            for _s, _u in zip(seq_scores.tolist(), _uids):
+                                _g[_u].append(_s)
+                            _nonuniform = sum(1 for _v in _g.values() if (max(_v) - min(_v)) > 1e-8)
+                            # fraction of GRPO groups that carry a non-zero advantage
+                            metrics['grpo/nonuniform_group_frac'] = _nonuniform / max(1, len(_g))
+                            metrics['grpo/num_groups'] = float(len(_g))
+                        except Exception as _e:
+                            print(f"[instrumentation] skipped: {_e}")
+
                         # compute rewards. apply_kl_penalty if available
                         if not self.config.actor_rollout_ref.actor.use_kl_loss:
                             batch, kl_metrics = apply_kl_penalty(batch,
@@ -802,7 +821,8 @@ class RayPPOTrainer(object):
                                                   adv_estimator=self.config.algorithm.adv_estimator,
                                                   gamma=self.config.algorithm.gamma,
                                                   lam=self.config.algorithm.lam,
-                                                  num_repeat=self.config.actor_rollout_ref.rollout.n)
+                                                  num_repeat=self.config.actor_rollout_ref.rollout.n,
+                                                  norm_adv_by_std=self.config.algorithm.get('norm_adv_by_std', True))
 
                     # update critic
                     if self.use_critic:

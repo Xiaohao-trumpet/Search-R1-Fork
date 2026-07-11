@@ -154,6 +154,7 @@ algorithm:
   gamma: 1.0
   lam: 1.0
   adv_estimator: gae
+  norm_adv_by_std: True  # GRPO: divide advantage by group std. False = Dr. GRPO (mean-only baseline)
   no_think_rl: False
   kl_penalty: kl  # how to estimate kl divergence
   kl_ctrl:

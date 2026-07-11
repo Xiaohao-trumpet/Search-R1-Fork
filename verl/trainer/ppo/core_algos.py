@@ -111,16 +111,23 @@ def compute_gae_advantage_return(token_level_rewards: torch.Tensor, values: torc
 def compute_grpo_outcome_advantage(token_level_rewards: torch.Tensor,
                                    eos_mask: torch.Tensor,
                                    index: torch.Tensor,
-                                   epsilon: float = 1e-6):
+                                   epsilon: float = 1e-6,
+                                   norm_adv_by_std: bool = True):
     """
-    Compute advantage for GRPO, operating only on Outcome reward 
+    Compute advantage for GRPO, operating only on Outcome reward
     (with only one scalar reward for each response).
     Args:
         token_level_rewards: `(torch.Tensor)`
             shape: (bs, response_length)
         eos_mask: `(torch.Tensor)`
             shape: (bs, response_length)
-    
+        norm_adv_by_std: if True (default), divide the centered advantage by the
+            group std (vanilla GRPO). If False, use only mean subtraction
+            (Dr. GRPO, 2503.20783): removes the question-difficulty bias where
+            low-std groups (near-trivial / near-impossible prompts, which is
+            exactly where BINARY rewards give std=sqrt(p(1-p))~0) get their
+            advantages blown up. See IMPROVEMENT_DESIGN_zh.md sec 4.2 / 5.2.
+
     Returns:
         advantages: `(torch.Tensor)`
             shape: (bs, response_length)
@@ -149,7 +156,11 @@ def compute_grpo_outcome_advantage(token_level_rewards: torch.Tensor,
             else:
                 raise ValueError(f"no score in prompt index: {idx}")
         for i in range(bsz):
-            scores[i] = (scores[i] - id2mean[index[i]]) / (id2std[index[i]] + epsilon)
+            if norm_adv_by_std:
+                scores[i] = (scores[i] - id2mean[index[i]]) / (id2std[index[i]] + epsilon)
+            else:
+                # Dr. GRPO: mean-only baseline, no std normalization.
+                scores[i] = scores[i] - id2mean[index[i]]
         scores = scores.unsqueeze(-1).tile([1, response_length]) * eos_mask
 
     return scores, scores
