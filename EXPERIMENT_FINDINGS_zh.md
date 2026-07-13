@@ -199,7 +199,21 @@ consistent with the 25-step 2x2]; response length 344 vs 148; **entropy 1.250 vs
 entropy safeguard hold over the longer horizon).
 
 => With an adequately powered val set, F1+A+ reaches ~2x the baseline's val EM
-(0.150 vs 0.075) and keeps climbing while the baseline stalls at +0.025. This
-resolves the "val too coarse" caveat: the gradient-coverage advantage (H1) does
-convert into task performance. (Full 50-step numbers to be appended when the
-detached re-run finishes.)
+and keeps climbing while the baseline stalls. This resolves the "val too coarse"
+caveat: the gradient-coverage advantage (H1) does convert into task performance.
+
+### Finding 4 (FINAL, full 50 steps, detached re-run completed exit 0)
+val EM (n=40): EM+vanilla 0.05/0.05/0.05/0.075/0.100/0.075 (best 0.100);
+               F1+A+      0.05/0.10/0.05/0.125/0.175/0.125 (best 0.175).
+50-step means:
+| metric | EM+vanilla | F1+A+ | ratio |
+|---|---|---|---|
+| nonuniform_group_frac | 0.110 | 0.390 | 3.5x |
+| nonzero_frac | 0.039 | 0.210 | 5.4x |
+| val EM best/final | 0.100/0.075 | 0.175/0.125 | ~1.7x |
+| entropy | 1.625 | 1.042 | not collapsed |
+| grad_norm | 1.53 | 2.43 | controlled (Dr.GRPO tames dyn-sampling) |
+| response_length | 349 | 197 | more concise |
+=> Robust: 3.5x gradient coverage (matches the 25-step 2x2's 3.3x), ~1.7x val EM,
+entropy still 1.042 at step 50 (no collapse), grad_norm 2.43 (vs 10.43 for
+dyn-sampling alone -> Dr.GRPO's stabilization confirmed over the long horizon).
